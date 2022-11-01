@@ -1,0 +1,1639 @@
+
+<!DOCTYPE html>
+<html lang="en">
+    
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="generator" content="Moran">
+    <title>3d sdk - Moran</title>
+    <meta name="author" content="Moran">
+    
+        <meta name="keywords" content="hexo,javascript,">
+    
+    
+    
+    <script type="application/ld+json">{"@context":"http://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Moran","sameAs":["https://github.com/","http://stackoverflow.com/users","https://twitter.com/","https://www.baidu.com/","https://plus.google.com/","https://www.linkedin.com/profile/","liumoran@outlook.com"],"image":"zhen.jpg"},"articleBody":"[TOC]\n一. 简介\n1. WebGL、Three、Babylon此处涉及原理性和技术选型问题，后续补充WebGL 3D渲染原理Three.js 内存泄漏问题以及优化方案Babylon 最终技术选型\n2. 功能![IMAGE](quiver-image-url/8282EAFE37AD7C783FAFED212FA6E9B9.jpg =583x597)\n二. 结构\n1. SDK 目录结构12345678910111213141516.├── IMPORT.md 按需加载文档├── README.md README文档├── dist 打包目录│   ├── index.html│   ├── sdk.js 最终输出的sdk文件│   └── stats.json 依赖关系预览JSON├── src 源码目录│   ├── index.html 用与开发的主界面│   ├── index.js 核心代码│   ├── legacy.js 按需加载文件│   ├── load.js 按需加载文件│   └── loadingBase64.js 加载动画├── package.json├── package-lock.json└── webpack.config.js\n\n\n2. 核心结构2.1 整体结构/src/index.js 的结构如下，包括loading配置和两个类：CustomLoadingScreen 和 PLM\n![IMAGE](quiver-image-url/A52125C7B4CC9A17A1913BC049016F60.jpg =345x183)\n其中：\n\ndefaultLoadingStyle 负责控制loading动画的样式和布局\ndefaultLoadingId 加载动画的uid 在一个屏幕内实例多个3D模型时启用\nCustomLoadingScreen 自定义加载器类，其属性和方法需要按照 Babylon 的文档要求来实现\nPLM 3D模型渲染类，可用于公司具体业务场景，例如模型渲染、部位贴图切换、灯光和背景设置、摄像头交互控制等\n$plm 将PLM类挂载到window对象, 可通过 new $plm(...) 实例化\n\n2.2 加载器的设计和扩展通过目录结构和整体结构可以看到，处理loading占用了结构的一部分，那为什么要专门花费结构资源来处理loading呢，有以下几个原因。\n首先是sdk封装的要求。整个项目最终要导出的是一个js格式的通用的sdk文件，方便具体的项目去使用。因此涉及到loading的页面结构和页面样式的逻辑，我们也是需要用js去实现的。\n其次是为了用户体验。由于模型文件通常体积较大，用户电脑的CPU/GPU配置也各不相同，导致模型实例化时会产生两个异步过程，即加载过程和渲染过程，这两个过程所占用时间是用户可以直观感知的，需要loading在这两个期间起到引导和反馈的作用。\n最后，loading功能模块和我们的sdk核心功能是整体分离但局部耦合的。模型渲染完毕前后，是分别需要一个start和finish的回调，这些回调是被Babylon耦合在加载动画中的，所以我们要通过CustomLoadingScreen类来控制这个异步回调发起的时机。而在加载过程和渲染初始化过程结束后，loading相关的DOM资源会被移除，相关逻辑终止，不参与我们后续的模型渲染进程，因此是整体分离的。参考以下代码：\n12// PLM.render 将模型加载开始和渲染结束的回调暴露出来，即 cbStart 和 cbFinishedengine.loadingScreen = new CustomLoadingScreen(&#x27;loading&#x27;, config.loading, cbStart, cbFinished)\n\nloading效果是一张gif图，这个图片是先转成base64格式存储在/src/loadingBase64.js中，再引入到 CustomLoadingScreen的构造函数中使用。loading的尺寸、位置等css信息，通过defaultLoadingStyle来控制。\n在不同的项目中，对loading的要求也有不同。如一个页面渲染了n个模型也就对应有n个loading，或者要修改loading图或者位置、尺寸。对于这些需求，sdk提供了 defaultLoadingId参数，可在实例化时传入，最终被绑定至loading动画DOM的id属性上，即可随意控制了。\n三. 使用说明\n1. 准备模型文件首先要准备待渲染的模型文件，以及模型文件所在路径（相对路径和绝对路径均可）。\n模型文件格式有很多，如 .obj .glb .gitf 等，由于模型文件普遍体积较大，推荐使用谷歌的 Draco 算法，可以将obj格式文件高度压缩且基本不失真，节省服务器空间并提高页面加载速度。此处以经过压缩的gltf为例，其gltf文件、bin文件和贴图需要放在同一目录下。其它格式模型文件大多单文件，只需切换Babylon提供的对应加载器即可。\n![IMAGE](quiver-image-url/1D7B6DF6F3FCD6D1480AFEDA4C2B964C.jpg =678x513)\n2. 引入sdk文件可在html中直接通过script标签引入\n1&lt;script src=&quot;xxxx/xxx/sdk.js&quot;&gt;&lt;/script&gt;\n\n也可通过 import 引入\n1import &#x27;xxxx/xxx/sdk.js&#x27;\n\n3. 创建渲染节点创建DOM节点，并提供id属性\n1&lt;div id=&quot;three-container&quot;&gt;&lt;/div&gt;\n\n4. 编写配置项12345678910111213141516171819// 配置项const config = &#123;    path: &#x27;http://oss.xxxx.com/xxx/Gltf/5108755581552330579/&#x27;,    gltf: &#x27;5108755581552330579.gltf&#x27;,    // scale: 0.7,    // position: &#123;    //     x: 0,    //     y: 0.1    // &#125;,    background: &#123;        url: &#x27;https://xxx.xxx.com/assets-3d/bg/3d/001.jpg&#x27;    &#125;,    loading: &#123;        visible: true,        url: &#x27;https://xxx.xxx.com/xxx/loading.gif&#x27;,        background: &#x27;#FFFFFF&#x27;    &#125;,    groups: []&#125;\n\n配置项配置信息如下\n\n\n\n参数\n必填\n类型\n说明\n备注\n\n\n\npath\n是\nString\n模型文件路径，支持相对路径\n\n\n\ngltf\n是\nBoolean\n模型文件名\n\n\n\nscale\n否\nNumber\n模型缩放比例\n\n\n\nposition\n否\nObject\n模型初始化时相对容器中心点的位置\n\n\n\nbackground\n否\n\nObject\n默认背景，url为背景图地址\n\n\nloading\n否\nObject\n模型加载时的loading遮罩，url为中心动图地址，支持base64；background为遮罩背景色，支持rgb和HEX形式。\n\n\n\ngroups\n是\nBoolean\n模型分组部位配置信息，由后端按照约定格式返回\n\n\n\n5. 渲染1234567891011121314151617// 配置项const config = &#123;...&#125;// 回调function cbStart () &#123;    // ...&#125;function cbFinished () &#123;    // ...&#125;function cbSelect (groupId, event, pointerX, pointerY) &#123;    // ...&#125;// 实例化window.onload = function () &#123;    const plm = new $plm()    plm.render(&#x27;three-container&#x27;, config, cbStart, cbFinished, cbSelect)&#125;\n\n模型渲染成功效果图如下![IMAGE](quiver-image-url/67E1A398FDA61714D259B088957CAF19.jpg =1275x801)\n四. API\n1. Accessors\n\n\n属性名\n类型\n默认值\n说明\n\n\n\nautoRotation\nBoolean\ntrue\n是否开启自动旋转\n\n\nrotateSpeed\nNumber\n0.1\n自动旋转\n\n\nlockScale\nBoolean\nfalse\n是否锁定模型放缩视角\n\n\nmodScale\nNumber\nPI/4\n模型放缩比例\n\n\n示例：\n1234567891011// 开启自动旋转plm.autoRotation = true// 关闭自动旋转plm.autoRotation = true// 调整旋转速度plm.rotateSpeed = 0.3// 调整缩放比例 仅当 mod.lockScale 为true时有效plm.modScale = Math.PI / 8 // 注意角度制和弧度制的换算\n\n2. Methodsplm.render功能描述\n初始化模型并挂载DOM，配置回调函数\n参数\n\n\n\n属性\n类型\n默认值\n必填\n说明\n\n\n\ndomId\nString\n\n是\n模型挂载的DOM容器\n\n\nconfig\nObject\n\n是\n模型配置项\n\n\ncbStart\nFunction\n\n否\n模型资源加载开始的回调函数\n\n\ncbFinished\nFunction\n\n否\n模型初始化结束的回调函数\n\n\ncbSelect\nFunction\n\n否\n模型区域选中的回调函数\n\n\n示例代码\n12345678910const config = &#123;...&#125;plm.render(&#x27;three-container&#x27;, config1, () =&gt; &#123;    console.log(&#x27;start&#x27;)&#125;, () =&gt; &#123;    console.log(&#x27;finished&#x27;)&#125;, (groupId, event, x, y) =&gt; &#123;    console.log(&#x27;选中区域ID&#x27;, groupId)    console.log(&#x27;点击事件&#x27;, event)    console.log(&#x27;点击位置坐标&#x27;, x, y)&#125;)\n\nplm.dispose功能描述\n递归卸载模型以及模型内部的贴图、纹理等对象，释放内存\n参数\n无\n示例代码\n1plm.dispose()\n\nplm.updateBackground\n该方法内部对背景图生成做了优化处理。使用md5对传入的背景图做重复鉴别，若相同url的图片被多次设置时，并不会生成新的背景图Layer对象，而是直接使用第一个。由于用作背景图的图片资源通常精细度较高体积较大，这样处理可有效降低页面开销。\n\n功能描述\n更换模型背景图\n参数\n\n\n\n属性\n类型\n默认值\n必填\n说明\n\n\n\nurl\nString\n\n是\n背景图的URL地址\n\n\n示例代码\n12const url = &quot;http://hesheng-zhizao-1306339461.cos.ap-guangzhou.myqcloud.com/test/erp/threeDReal/background/pc/097e5-1c62-45de-beb.jpg&quot;mod.updateBackground(url)\n\nplm.updateAttrInMaterial\n材料ID可在配置项中的 groups 内获取，也可调用 exportGroups、 getMaterialInGroup 等导出功能相关函数获取材料信息，再直接使用材料对象的id属性\n\n\n支持修改的属性名以及对应属性值，可在附录中查看\n\n功能描述\n更改材料配置参数\n参数\n\n\n\n属性\n类型\n默认值\n必填\n说明\n\n\n\nid\nString\n\n是\n材料id\n\n\nattrKey\nString\n\n是\n属性名\n\n\nval\nString|Number\n\n是\n属性值\n\n\n示例代码\n1234567const groupId = &#x27;Silk_Chiffon_FRONT_2678&#x27;const materialId = plm.getMaterialInGroup(&#x27;Silk_Chiffon_FRONT_2678&#x27;).id// 更改材料反射光为红色plm.updateAttrInMaterial(materialId, &#x27;albedoColor&#x27;, &#x27;#FF0000&#x27;)// 修改材料透明度为10%plm.updateAttrInMaterial(materialId, &#x27;alpha&#x27;, 0.1)\n\nplm.updateAttrInTexture\n材料ID获取方式与上文updateAttrInMaterial相同，不再赘述\n\n\n贴图类型合法值有六种 albedoTexture, bumpTexture, emissiveTexture, ambientTexture, opacityTexture, metallicTexture 具体信息见附录\n\n功能描述\n更改纹理贴图配置参数\n参数\n\n\n\n属性\n类型\n默认值\n必填\n说明\n\n\n\nid\nString\n\n是\n材料id\n\n\ntextureType\nString\n\n是\n贴图类型\n\n\nattrKey\nString\n\n是\n属性名\n\n\nval\nString|Number\n\n是\n属性值\n\n\n示例代码\n12345678const groupId = &#x27;Silk_Chiffon_FRONT_2678&#x27;const materialId = plm.getMaterialInGroup(&#x27;Silk_Chiffon_FRONT_2678&#x27;).id// 更改基本贴图的横向缩放比例为6plm.updateAttrInTexture(id, &#x27;albedoTexture&#x27;, &#x27;uScale&#x27;, 6)// 更改法线贴图的纵向缩放比例为16plm.updateAttrInTexture(id, &#x27;bumpTexture&#x27;, &#x27;vScale&#x27;, 16)\n\nplm.enableHighlight功能描述\n启用/关闭选区高亮功能，并设置高亮颜色\n参数\n\n\n\n属性\n类型\n默认值\n必填\n说明\n\n\n\nenable\nBoolean\n\n是\n开启或关闭高亮功能\n\n\ncolor\nString\n#00FF00\n否\n高亮颜色\n\n\n示例代码\n1234// 启用高亮，并设置高亮色为红色plm.enableHighlight(true, &#x27;#FF0000&#x27;)// 禁用高亮plm.enableHighlight(false)\n\nplm.highlightGroup功能描述\n高亮指定区域\n参数\n\n\n\n属性\n类型\n默认值\n必填\n说明\n\n\n\ngroupId\nString\n\n是\n区域id\n\n\n示例代码\n123456// 高亮第一个分组区域const groups = plm.exportGroups()if (groups.length) &#123;    const groupId = groups[0].groupId    plm.highlightGroup(groupId)&#125;\n\nplm.clearHighlight功能描述\n取消模型所有区域高亮状态\n参数\n无\n示例代码\n1plm.clearHighlight()\n\nplm.updateGroupMaterialV2\nupdateGroupMaterial 第一版本已经废弃，后续使用 updateGroupMaterialV2\n\n功能描述\n更改区域分组材料\n参数\n\n\n\n属性\n类型\n默认值\n必填\n说明\n\n\n\ngroupId\nString\n\n是\n分组ID\n\n\noptions\nObject:Options\n\n是\n材料生成配置项\n\n\nOptions\n\n\n\nOptions属性\n类型\n默认值\n必填\n说明\n\n\n\nuid\nString\n自动生成\n否\n面料id\n\n\nalpha\nNumber\n1\n否\n不透明度\n\n\nmetallic\nNumber\n0\n否\n金属度\n\n\nroughness\nNumber\n1\n否\n粗糙度\n\n\nemissiveIntensity\nNumber\n1\n否\n发光强度\n\n\ndirectIntensity\nNumber\n1\n否\n平行光强度\n\n\nambientTextureStrength\nNumber\n1\n否\n环境遮罩贴图强度\n\n\nalbedoColor\nString\n#FFFFFF\n否\n基础反射光\n\n\nclearCoat\nObject:ClearCoat\n\n否\n透明涂层设置\n\n\nalbedoTexture\nObject:Texture\n\n是\n基本贴图设置\n\n\nbumpTexture\nObject:Texture\n\n否\n法线贴图设置\n\n\nemissiveTexture\nObject:Texture\n\n否\n反射贴图设置\n\n\nambientTexture\nObject:Texture\n\n否\n环境反射贴图设置\n\n\nopacityTexture\nObject:Texture\n\n否\n透明贴图设置\n\n\nmetallicTexture\nObject:Texture\n\n否\n金属纹理贴图设置\n\n\nClearCoat\n\n\n\nClearCoat属性\n类型\n默认值\n必填\n说明\n\n\n\nisEnabled\nBoolean\nfalse\n否\n是否启用透明涂层\n\n\nintensity\nNumber\n1\n否\n透明涂层强度\n\n\nroughness\nNumber\n1\n否\n透明涂层粗糙度\n\n\nindiceOfRefraction\nNumber\n1.5\n否\n透明涂层折射指数\n\n\nTexture\n\n\n\nTexture属性\n类型\n默认值\n必填\n说明\n\n\n\nurl\nString\n\n是\n贴图文件资源地址\n\n\nhasAlpha\nBoolean\nfalse\n否\n是否展示贴图alpha值\n\n\nuScale\nNumber\n80\n否\n横向缩放倍数\n\n\nvScale\nNumber\n80\n否\n纵向缩放倍数\n\n\nwAng\nNumber\n0\n否\n中心旋转角度\n\n\nuAng\nNumber\n0\n否\n上下旋转角度\n\n\nvAng\nNumber\n0\n否\n左右旋转角度\n\n\n示例代码\n1234567891011121314151617const groupId = &#x27;......&#x27;const materialConfig = &#123;    uid: &#x27;xxxxxxx&#x27;,    albedoTexture: &#123;        url: &#x27;https://xxxx/xxx/xx.jpg&#x27;,        uScale: 80,        vScale: 80,        wAng: 0,        uAng: 0,        vAng: 0,        hasAlpha: false    &#125;,    alpha: 0.5,    albedoColor: &#x27;#FF0000&#x27;&#125;plm.updateGroupMaterialV2(groupId, materialConfig)\n\nplm.resetGroupMaterial功能描述\n还原分组默认面料\n参数\n\n\n\n属性\n类型\n默认值\n必填\n说明\n\n\n\ngroupId\nString\n\n是\n分组ID\n\n\n示例代码\n12const groupId = &#x27;xxxxx&#x27;plm.resetGroupMaterial(groupId)\n\nplm.selectGroup\n选中分组区域后会伴有高亮效果，同时触发render函数的 cbSelect 回调。\n\n\n选中分组区域有两种方式，即交互式触发和编程式触发。交互式即用户鼠标点击模型的指定区域触发；编程式不需要鼠标点击，因此可利用本方法实现具体的定制业务逻辑。\n\n功能描述\n编程式选中分组区域\n参数\n\n\n\n属性\n类型\n默认值\n必填\n说明\n\n\n\ngroupId\nString\n\n是\n分组ID\n\n\n示例代码\n12const groupId = &#x27;xxxxx&#x27;plm.selectGroup(groupId)\n\n\nplm.getMaterialInGroup功能描述\n打印指定区域分组的材料对象\n参数\n\n\n\n属性\n类型\n默认值\n必填\n说明\n\n\n\ngroupId\nString\n\n是\n区域分组ID\n\n\n示例代码\n123456const groups = plm.exportGroups()if (groups.length) &#123;    const groupId = groups[0].groupId    const metarial = plm.getMaterialInGroup(groupId)    console.log(metarial)&#125;\n\nplm.exportGroups\n返回的分组信息列表为深拷贝，其格式见附录\n\n功能描述\n打印分组信息\n参数\n无\n示例代码\n1plm.exportGroups()\n\nplm.resetCamera功能描述\n重置视角\n参数\n\n\n\n属性\n类型\n默认值\n必填\n说明\n\n\n\nradius\nNumber\n模型初始距离\n否\n相机与模型距离\n\n\n示例代码\n1234// 重置视角 距离为模型最适距离plm.resetCamera()// 重置视角 距离为自定义距离plm.resetCamera(1.2)\n\n五. 附录1. 材料配置参数\n\n\n参数\n类型\n默认值\n取值范围\n说明\n\n\n\nalbedoColor\nString\n#FFFFFF\n#000000 ~ #FFFFFF\n基本反射颜色，任意hex颜色码均可\n\n\nalpha\nNumber\n1\n[0, 1]\nalpha值，取0时全透，取1时不透明\n\n\n2. 材料贴图类型\n\n\n编码\n名称\n说明\n\n\n\nalbedoTexture\n\n\n\n\nbumpTexture\n\n\n\n\nemissiveTexture\n\n\n\n\nambientTexture\n\n\n\n\nopacityTexture\n\n\n\n\nmetallicTexture\n\n\n\n\n3. 纹理贴图配置参数\n\n\n参数\n类型\n默认值\n取值范围\n说明\n\n\n\nurl\nString\n\n\n贴图地址\n\n\nuScale\nNumber\n80\n[1, 100]\n横向缩放倍数\n\n\nvScale\nNumber\n80\n[1, 100]\n纵向缩放倍数\n\n\nwAng\nNumber\n0\n[0, 360]\n中心旋转角度\n\n\nuAng\nNumber\n0\n[0, 360]\n上下旋转角度\n\n\nvAng\nNumber\n0\n[0, 360]\n左右旋转角度\n\n\nhasAlpha\nBOOlean\nfalse\ntrue/false\n开启贴图alpha模式，在url图片为png时有效\n\n\n4. 分组信息打印格式 Array&lt;GroupInfo&gt;\nGroupInfo 可通过配置项config内的groups参数配置\n\n\n\n\n属性\n类型\n取值\n说明\n\n\n\ngroupId\nString\n\n分组ID\n\n\nname\nString\n\n组别名称，未取值时和groupId一致\n\n\nisShow\nString\n0-不展示 1-展示\n是否展示\n\n\nmeshes\nArray&lt;MeshInfo&gt;\n\n三维面列表\n\n\n\nMeshInfo 在建模过程中由建模师设置\n\n\n\n\n属性\n类型\n取值\n说明\n\n\n\nid\nString\n\n分组ID\n\n\nisVisible\nBOOlean\ntrue/false\n面是否展示\n\n\nname\nString\n\n面名称\n\n\nuniqueId\nNumber\n\nuid\n\n\n","dateCreated":"2022-07-21T11:07:27+08:00","dateModified":"2022-07-21T11:22:11+08:00","datePublished":"2022-07-21T11:07:27+08:00","description":"","headline":"3d sdk","image":[],"mainEntityOfPage":{"@type":"WebPage","@id":"https://moran96.github.io/2022/07/21/3d/"},"publisher":{"@type":"Organization","name":"Moran","sameAs":["https://github.com/","http://stackoverflow.com/users","https://twitter.com/","https://www.baidu.com/","https://plus.google.com/","https://www.linkedin.com/profile/","liumoran@outlook.com"],"image":"zhen.jpg","logo":{"@type":"ImageObject","url":"zhen.jpg"}},"url":"https://moran96.github.io/2022/07/21/3d/"}</script>
+    <meta name="description" content="[TOC] 一. 简介 1. WebGL、Three、Babylon此处涉及原理性和技术选型问题，后续补充WebGL 3D渲染原理Three.js 内存泄漏问题以及优化方案Babylon 最终技术选型 2. 功能![IMAGE](quiver-image-url&#x2F;8282EAFE37AD7C783FAFED212FA6E9B9.jpg &#x3D;583x597) 二. 结构 1. SDK 目录结构1234">
+<meta property="og:type" content="blog">
+<meta property="og:title" content="3d sdk">
+<meta property="og:url" content="https://moran96.github.io/2022/07/21/3d/index.html">
+<meta property="og:site_name" content="Moran">
+<meta property="og:description" content="[TOC] 一. 简介 1. WebGL、Three、Babylon此处涉及原理性和技术选型问题，后续补充WebGL 3D渲染原理Three.js 内存泄漏问题以及优化方案Babylon 最终技术选型 2. 功能![IMAGE](quiver-image-url&#x2F;8282EAFE37AD7C783FAFED212FA6E9B9.jpg &#x3D;583x597) 二. 结构 1. SDK 目录结构1234">
+<meta property="og:locale" content="en_US">
+<meta property="article:published_time" content="2022-07-21T03:07:27.989Z">
+<meta property="article:modified_time" content="2022-07-21T03:22:11.106Z">
+<meta property="article:author" content="Moran">
+<meta property="article:tag" content="hexo">
+<meta property="article:tag" content="javascript">
+<meta name="twitter:card" content="summary">
+    
+    
+        
+    
+    
+        <meta property="og:image" content="https://moran96.github.io/assets/images/zhen.jpg"/>
+    
+    
+    
+    
+    <!--STYLES-->
+    
+<link rel="stylesheet" href="/assets/css/style-oxlnrw3wkyklbktskav5dbns6q6llh5cxjhjrh9zosxbpgotjzbt7sodyvld.min.css">
+
+    <!--STYLES END-->
+    
+
+    
+
+    
+        
+    
+</head>
+
+    <body>
+        <div id="blog">
+            <!-- Define author's picture -->
+
+
+<header id="header" data-behavior="4">
+    <i id="btn-open-sidebar" class="fa fa-lg fa-bars"></i>
+    <div class="header-title">
+        <a
+            class="header-title-link"
+            href="/"
+            aria-label=""
+        >
+            Moran
+        </a>
+    </div>
+    
+        
+            <a
+                class="header-right-icon open-algolia-search"
+                href="#about"
+                aria-label="Open the link: /#about"
+            >
+        
+        
+            <i class="fa fa-search fa-lg"></i>
+        
+        </a>
+    
+</header>
+
+            <!-- Define author's picture -->
+
+
+
+        
+    
+
+<nav id="sidebar" data-behavior="4">
+    <div class="sidebar-container">
+        
+            <div class="sidebar-profile">
+                <a
+                    href="/#about"
+                    aria-label="Read more about the author"
+                >
+                    <img class="sidebar-profile-picture" src="/assets/images/zhen.jpg" alt="Author&#39;s picture"/>
+                </a>
+                <h4 class="sidebar-profile-name">Moran</h4>
+                
+                    <h5 class="sidebar-profile-bio"><p>author.bio</p>
+</h5>
+                
+            </div>
+        
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/"
+                            
+                            rel="noopener"
+                            title="Home"
+                        >
+                        <i class="sidebar-button-icon fa fa-home" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">Home</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-categories"
+                            
+                            rel="noopener"
+                            title="Categories"
+                        >
+                        <i class="sidebar-button-icon fa fa-bookmark" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">Categories</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-tags"
+                            
+                            rel="noopener"
+                            title="Tags"
+                        >
+                        <i class="sidebar-button-icon fa fa-tags" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">Tags</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/all-archives"
+                            
+                            rel="noopener"
+                            title="Archives"
+                        >
+                        <i class="sidebar-button-icon fa fa-archive" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">Archives</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link open-algolia-search"
+                            href="#search"
+                            
+                            rel="noopener"
+                            title="Search"
+                        >
+                        <i class="sidebar-button-icon fa fa-search" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">Search</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="#about"
+                            
+                            rel="noopener"
+                            title="About"
+                        >
+                        <i class="sidebar-button-icon fa fa-question" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">About</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="https://github.com/"
+                            
+                                target="_blank"
+                            
+                            rel="noopener"
+                            title="GitHub"
+                        >
+                        <i class="sidebar-button-icon fab fa-github" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">GitHub</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="http://stackoverflow.com/users"
+                            
+                                target="_blank"
+                            
+                            rel="noopener"
+                            title="Stack Overflow"
+                        >
+                        <i class="sidebar-button-icon fab fa-stack-overflow" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">Stack Overflow</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="https://twitter.com/"
+                            
+                                target="_blank"
+                            
+                            rel="noopener"
+                            title="Twitter"
+                        >
+                        <i class="sidebar-button-icon fab fa-twitter" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">Twitter</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="https://www.baidu.com/"
+                            
+                                target="_blank"
+                            
+                            rel="noopener"
+                            title="Facebook"
+                        >
+                        <i class="sidebar-button-icon fab fa-facebook" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">Facebook</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="https://plus.google.com/"
+                            
+                                target="_blank"
+                            
+                            rel="noopener"
+                            title="Google +"
+                        >
+                        <i class="sidebar-button-icon fab fa-google-plus" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">Google +</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="https://www.linkedin.com/profile/"
+                            
+                                target="_blank"
+                            
+                            rel="noopener"
+                            title="LinkedIn"
+                        >
+                        <i class="sidebar-button-icon fab fa-linkedin" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">LinkedIn</span>
+                    </a>
+            </li>
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/liumoran@outlook.com"
+                            
+                            rel="noopener"
+                            title="Mail"
+                        >
+                        <i class="sidebar-button-icon fa fa-envelope" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">Mail</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+            <ul class="sidebar-buttons">
+            
+                <li class="sidebar-button">
+                    
+                        <a
+                            class="sidebar-button-link "
+                            href="/atom.xml"
+                            
+                            rel="noopener"
+                            title="RSS"
+                        >
+                        <i class="sidebar-button-icon fa fa-rss" aria-hidden="true"></i>
+                        <span class="sidebar-button-desc">RSS</span>
+                    </a>
+            </li>
+            
+        </ul>
+        
+    </div>
+</nav>
+
+            
+            <div id="main" data-behavior="4"
+                 class="
+                        hasCoverMetaIn
+                        ">
+                
+<article class="post">
+    
+    
+        <div class="post-header main-content-wrap text-left">
+    
+        <h1 class="post-title">
+            3d sdk
+        </h1>
+    
+    
+        <div class="post-meta">
+    <time datetime="2022-07-21T11:07:27+08:00">
+	
+		    Jul 21, 2022
+    	
+    </time>
+    
+</div>
+
+    
+</div>
+
+    
+    <div class="post-content markdown">
+        <div class="main-content-wrap">
+            <p>[TOC]</p>
+<h1 id="一-简介"><a href="#一-简介" class="headerlink" title="一. 简介"></a>一. 简介</h1><hr>
+<h2 id="1-WebGL、Three、Babylon"><a href="#1-WebGL、Three、Babylon" class="headerlink" title="1. WebGL、Three、Babylon"></a>1. WebGL、Three、Babylon</h2><p>此处涉及原理性和技术选型问题，后续补充<br>WebGL 3D渲染原理<br>Three.js 内存泄漏问题以及优化方案<br>Babylon 最终技术选型</p>
+<h2 id="2-功能"><a href="#2-功能" class="headerlink" title="2. 功能"></a>2. 功能</h2><p>![IMAGE](quiver-image-url/8282EAFE37AD7C783FAFED212FA6E9B9.jpg =583x597)</p>
+<h1 id="二-结构"><a href="#二-结构" class="headerlink" title="二. 结构"></a>二. 结构</h1><hr>
+<h2 id="1-SDK-目录结构"><a href="#1-SDK-目录结构" class="headerlink" title="1. SDK 目录结构"></a>1. SDK 目录结构</h2><figure class="highlight shell"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br></pre></td><td class="code"><pre><span class="line">.</span><br><span class="line">├── IMPORT.md 按需加载文档</span><br><span class="line">├── README.md README文档</span><br><span class="line">├── dist 打包目录</span><br><span class="line">│   ├── index.html</span><br><span class="line">│   ├── sdk.js 最终输出的sdk文件</span><br><span class="line">│   └── stats.json 依赖关系预览JSON</span><br><span class="line">├── src 源码目录</span><br><span class="line">│   ├── index.html 用与开发的主界面</span><br><span class="line">│   ├── index.js 核心代码</span><br><span class="line">│   ├── legacy.js 按需加载文件</span><br><span class="line">│   ├── load.js 按需加载文件</span><br><span class="line">│   └── loadingBase64.js 加载动画</span><br><span class="line">├── package.json</span><br><span class="line">├── package-lock.json</span><br><span class="line">└── webpack.config.js</span><br></pre></td></tr></table></figure>
+
+
+<h2 id="2-核心结构"><a href="#2-核心结构" class="headerlink" title="2. 核心结构"></a>2. 核心结构</h2><h3 id="2-1-整体结构"><a href="#2-1-整体结构" class="headerlink" title="2.1 整体结构"></a>2.1 整体结构</h3><p><code>/src/index.js</code> 的结构如下，包括loading配置和两个类：<code>CustomLoadingScreen</code> 和 <code>PLM</code></p>
+<p>![IMAGE](quiver-image-url/A52125C7B4CC9A17A1913BC049016F60.jpg =345x183)</p>
+<p>其中：</p>
+<ul>
+<li>defaultLoadingStyle 负责控制loading动画的样式和布局</li>
+<li>defaultLoadingId 加载动画的uid 在一个屏幕内实例多个3D模型时启用</li>
+<li><strong>CustomLoadingScreen</strong> 自定义加载器类，其属性和方法需要按照 <code>Babylon</code> 的文档要求来实现</li>
+<li><strong>PLM</strong> 3D模型渲染类，可用于公司具体业务场景，例如模型渲染、部位贴图切换、灯光和背景设置、摄像头交互控制等</li>
+<li>$plm 将PLM类挂载到window对象, 可通过 <code>new $plm(...)</code> 实例化</li>
+</ul>
+<h3 id="2-2-加载器的设计和扩展"><a href="#2-2-加载器的设计和扩展" class="headerlink" title="2.2 加载器的设计和扩展"></a>2.2 加载器的设计和扩展</h3><p>通过目录结构和整体结构可以看到，处理loading占用了结构的一部分，那为什么要专门花费结构资源来处理loading呢，有以下几个原因。</p>
+<p>首先是sdk封装的要求。整个项目最终要导出的是一个js格式的通用的sdk文件，方便具体的项目去使用。因此涉及到loading的页面结构和页面样式的逻辑，我们也是需要用js去实现的。</p>
+<p>其次是为了用户体验。由于模型文件通常体积较大，用户电脑的CPU/GPU配置也各不相同，导致模型实例化时会产生两个异步过程，即加载过程和渲染过程，这两个过程所占用时间是用户可以直观感知的，需要loading在这两个期间起到引导和反馈的作用。</p>
+<p>最后，loading功能模块和我们的sdk核心功能是整体分离但局部耦合的。模型渲染完毕前后，是分别需要一个<code>start</code>和<code>finish</code>的回调，这些回调是被<code>Babylon</code>耦合在加载动画中的，所以我们要通过<code>CustomLoadingScreen</code>类来控制这个异步回调发起的时机。而在加载过程和渲染初始化过程结束后，loading相关的DOM资源会被移除，相关逻辑终止，不参与我们后续的模型渲染进程，因此是整体分离的。参考以下代码：</p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// PLM.render 将模型加载开始和渲染结束的回调暴露出来，即 cbStart 和 cbFinished</span></span><br><span class="line">engine.<span class="property">loadingScreen</span> = <span class="keyword">new</span> <span class="title class_">CustomLoadingScreen</span>(<span class="string">&#x27;loading&#x27;</span>, config.<span class="property">loading</span>, cbStart, cbFinished)</span><br></pre></td></tr></table></figure>
+
+<p>loading效果是一张gif图，这个图片是先转成base64格式存储在<code>/src/loadingBase64.js</code>中，再引入到 <code>CustomLoadingScreen</code>的构造函数中使用。loading的尺寸、位置等css信息，通过<code>defaultLoadingStyle</code>来控制。</p>
+<p>在不同的项目中，对loading的要求也有不同。如一个页面渲染了n个模型也就对应有n个loading，或者要修改loading图或者位置、尺寸。对于这些需求，sdk提供了 <code>defaultLoadingId</code>参数，可在实例化时传入，最终被绑定至loading动画DOM的id属性上，即可随意控制了。</p>
+<h1 id="三-使用说明"><a href="#三-使用说明" class="headerlink" title="三. 使用说明"></a>三. 使用说明</h1><hr>
+<h2 id="1-准备模型文件"><a href="#1-准备模型文件" class="headerlink" title="1. 准备模型文件"></a>1. 准备模型文件</h2><p>首先要准备待渲染的模型文件，以及模型文件所在路径（相对路径和绝对路径均可）。</p>
+<p>模型文件格式有很多，如 .obj .glb .gitf 等，由于模型文件普遍体积较大，推荐使用谷歌的 <code>Draco</code> 算法，可以将obj格式文件高度压缩且基本不失真，节省服务器空间并提高页面加载速度。此处以经过压缩的gltf为例，其gltf文件、bin文件和贴图需要放在同一目录下。其它格式模型文件大多单文件，只需切换Babylon提供的对应加载器即可。</p>
+<p>![IMAGE](quiver-image-url/1D7B6DF6F3FCD6D1480AFEDA4C2B964C.jpg =678x513)</p>
+<h2 id="2-引入sdk文件"><a href="#2-引入sdk文件" class="headerlink" title="2. 引入sdk文件"></a>2. 引入sdk文件</h2><p>可在html中直接通过script标签引入</p>
+<figure class="highlight html"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">script</span> <span class="attr">src</span>=<span class="string">&quot;xxxx/xxx/sdk.js&quot;</span>&gt;</span><span class="tag">&lt;/<span class="name">script</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<p>也可通过 import 引入</p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">import</span> <span class="string">&#x27;xxxx/xxx/sdk.js&#x27;</span></span><br></pre></td></tr></table></figure>
+
+<h2 id="3-创建渲染节点"><a href="#3-创建渲染节点" class="headerlink" title="3. 创建渲染节点"></a>3. 创建渲染节点</h2><p>创建DOM节点，并提供id属性</p>
+<figure class="highlight html"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line"><span class="tag">&lt;<span class="name">div</span> <span class="attr">id</span>=<span class="string">&quot;three-container&quot;</span>&gt;</span><span class="tag">&lt;/<span class="name">div</span>&gt;</span></span><br></pre></td></tr></table></figure>
+
+<h2 id="4-编写配置项"><a href="#4-编写配置项" class="headerlink" title="4. 编写配置项"></a>4. 编写配置项</h2><figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br><span class="line">18</span><br><span class="line">19</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 配置项</span></span><br><span class="line"><span class="keyword">const</span> config = &#123;</span><br><span class="line">    <span class="attr">path</span>: <span class="string">&#x27;http://oss.xxxx.com/xxx/Gltf/5108755581552330579/&#x27;</span>,</span><br><span class="line">    <span class="attr">gltf</span>: <span class="string">&#x27;5108755581552330579.gltf&#x27;</span>,</span><br><span class="line">    <span class="comment">// scale: 0.7,</span></span><br><span class="line">    <span class="comment">// position: &#123;</span></span><br><span class="line">    <span class="comment">//     x: 0,</span></span><br><span class="line">    <span class="comment">//     y: 0.1</span></span><br><span class="line">    <span class="comment">// &#125;,</span></span><br><span class="line">    <span class="attr">background</span>: &#123;</span><br><span class="line">        <span class="attr">url</span>: <span class="string">&#x27;https://xxx.xxx.com/assets-3d/bg/3d/001.jpg&#x27;</span></span><br><span class="line">    &#125;,</span><br><span class="line">    <span class="attr">loading</span>: &#123;</span><br><span class="line">        <span class="attr">visible</span>: <span class="literal">true</span>,</span><br><span class="line">        <span class="attr">url</span>: <span class="string">&#x27;https://xxx.xxx.com/xxx/loading.gif&#x27;</span>,</span><br><span class="line">        <span class="attr">background</span>: <span class="string">&#x27;#FFFFFF&#x27;</span></span><br><span class="line">    &#125;,</span><br><span class="line">    <span class="attr">groups</span>: []</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>配置项配置信息如下</p>
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>必填</th>
+<th>类型</th>
+<th>说明</th>
+<th>备注</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>path</td>
+<td>是</td>
+<td>String</td>
+<td>模型文件路径，支持相对路径</td>
+<td></td>
+</tr>
+<tr>
+<td>gltf</td>
+<td>是</td>
+<td>Boolean</td>
+<td>模型文件名</td>
+<td></td>
+</tr>
+<tr>
+<td>scale</td>
+<td>否</td>
+<td>Number</td>
+<td>模型缩放比例</td>
+<td></td>
+</tr>
+<tr>
+<td>position</td>
+<td>否</td>
+<td>Object</td>
+<td>模型初始化时相对容器中心点的位置</td>
+<td></td>
+</tr>
+<tr>
+<td>background</td>
+<td>否</td>
+<td></td>
+<td>Object</td>
+<td>默认背景，url为背景图地址</td>
+</tr>
+<tr>
+<td>loading</td>
+<td>否</td>
+<td>Object</td>
+<td>模型加载时的loading遮罩，url为中心动图地址，支持base64；background为遮罩背景色，支持rgb和HEX形式。</td>
+<td></td>
+</tr>
+<tr>
+<td>groups</td>
+<td>是</td>
+<td>Boolean</td>
+<td>模型分组部位配置信息，由后端按照约定格式返回</td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="5-渲染"><a href="#5-渲染" class="headerlink" title="5. 渲染"></a>5. 渲染</h2><figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 配置项</span></span><br><span class="line"><span class="keyword">const</span> config = &#123;...&#125;</span><br><span class="line"><span class="comment">// 回调</span></span><br><span class="line"><span class="keyword">function</span> <span class="title function_">cbStart</span> () &#123;</span><br><span class="line">    <span class="comment">// ...</span></span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">function</span> <span class="title function_">cbFinished</span> () &#123;</span><br><span class="line">    <span class="comment">// ...</span></span><br><span class="line">&#125;</span><br><span class="line"><span class="keyword">function</span> <span class="title function_">cbSelect</span> (groupId, event, pointerX, pointerY) &#123;</span><br><span class="line">    <span class="comment">// ...</span></span><br><span class="line">&#125;</span><br><span class="line"><span class="comment">// 实例化</span></span><br><span class="line"><span class="variable language_">window</span>.<span class="property">onload</span> = <span class="keyword">function</span> (<span class="params"></span>) &#123;</span><br><span class="line">    <span class="keyword">const</span> plm = <span class="keyword">new</span> $plm()</span><br><span class="line">    plm.<span class="title function_">render</span>(<span class="string">&#x27;three-container&#x27;</span>, config, cbStart, cbFinished, cbSelect)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<p>模型渲染成功效果图如下<br>![IMAGE](quiver-image-url/67E1A398FDA61714D259B088957CAF19.jpg =1275x801)</p>
+<h1 id="四-API"><a href="#四-API" class="headerlink" title="四. API"></a>四. API</h1><hr>
+<h2 id="1-Accessors"><a href="#1-Accessors" class="headerlink" title="1. Accessors"></a>1. Accessors</h2><table>
+<thead>
+<tr>
+<th>属性名</th>
+<th>类型</th>
+<th>默认值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>autoRotation</td>
+<td>Boolean</td>
+<td>true</td>
+<td>是否开启自动旋转</td>
+</tr>
+<tr>
+<td>rotateSpeed</td>
+<td>Number</td>
+<td>0.1</td>
+<td>自动旋转</td>
+</tr>
+<tr>
+<td>lockScale</td>
+<td>Boolean</td>
+<td>false</td>
+<td>是否锁定模型放缩视角</td>
+</tr>
+<tr>
+<td>modScale</td>
+<td>Number</td>
+<td>PI/4</td>
+<td>模型放缩比例</td>
+</tr>
+</tbody></table>
+<p>示例：</p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 开启自动旋转</span></span><br><span class="line">plm.<span class="property">autoRotation</span> = <span class="literal">true</span></span><br><span class="line"></span><br><span class="line"><span class="comment">// 关闭自动旋转</span></span><br><span class="line">plm.<span class="property">autoRotation</span> = <span class="literal">true</span></span><br><span class="line"></span><br><span class="line"><span class="comment">// 调整旋转速度</span></span><br><span class="line">plm.<span class="property">rotateSpeed</span> = <span class="number">0.3</span></span><br><span class="line"></span><br><span class="line"><span class="comment">// 调整缩放比例 仅当 mod.lockScale 为true时有效</span></span><br><span class="line">plm.<span class="property">modScale</span> = <span class="title class_">Math</span>.<span class="property">PI</span> / <span class="number">8</span> <span class="comment">// 注意角度制和弧度制的换算</span></span><br></pre></td></tr></table></figure>
+
+<h2 id="2-Methods"><a href="#2-Methods" class="headerlink" title="2. Methods"></a>2. Methods</h2><h3 id="plm-render"><a href="#plm-render" class="headerlink" title="plm.render"></a>plm.render</h3><p><strong>功能描述</strong></p>
+<p>初始化模型并挂载DOM，配置回调函数</p>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>domId</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>模型挂载的DOM容器</td>
+</tr>
+<tr>
+<td>config</td>
+<td>Object</td>
+<td></td>
+<td>是</td>
+<td>模型配置项</td>
+</tr>
+<tr>
+<td>cbStart</td>
+<td>Function</td>
+<td></td>
+<td>否</td>
+<td>模型资源加载开始的回调函数</td>
+</tr>
+<tr>
+<td>cbFinished</td>
+<td>Function</td>
+<td></td>
+<td>否</td>
+<td>模型初始化结束的回调函数</td>
+</tr>
+<tr>
+<td>cbSelect</td>
+<td>Function</td>
+<td></td>
+<td>否</td>
+<td>模型区域选中的回调函数</td>
+</tr>
+</tbody></table>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> config = &#123;...&#125;</span><br><span class="line">plm.<span class="title function_">render</span>(<span class="string">&#x27;three-container&#x27;</span>, config1, <span class="function">() =&gt;</span> &#123;</span><br><span class="line">    <span class="variable language_">console</span>.<span class="title function_">log</span>(<span class="string">&#x27;start&#x27;</span>)</span><br><span class="line">&#125;, <span class="function">() =&gt;</span> &#123;</span><br><span class="line">    <span class="variable language_">console</span>.<span class="title function_">log</span>(<span class="string">&#x27;finished&#x27;</span>)</span><br><span class="line">&#125;, <span class="function">(<span class="params">groupId, event, x, y</span>) =&gt;</span> &#123;</span><br><span class="line">    <span class="variable language_">console</span>.<span class="title function_">log</span>(<span class="string">&#x27;选中区域ID&#x27;</span>, groupId)</span><br><span class="line">    <span class="variable language_">console</span>.<span class="title function_">log</span>(<span class="string">&#x27;点击事件&#x27;</span>, event)</span><br><span class="line">    <span class="variable language_">console</span>.<span class="title function_">log</span>(<span class="string">&#x27;点击位置坐标&#x27;</span>, x, y)</span><br><span class="line">&#125;)</span><br></pre></td></tr></table></figure>
+
+<h3 id="plm-dispose"><a href="#plm-dispose" class="headerlink" title="plm.dispose"></a>plm.dispose</h3><p><strong>功能描述</strong></p>
+<p>递归卸载模型以及模型内部的贴图、纹理等对象，释放内存</p>
+<p><strong>参数</strong></p>
+<p>无</p>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">plm.<span class="title function_">dispose</span>()</span><br></pre></td></tr></table></figure>
+
+<h3 id="plm-updateBackground"><a href="#plm-updateBackground" class="headerlink" title="plm.updateBackground"></a>plm.updateBackground</h3><blockquote>
+<p>该方法内部对背景图生成做了优化处理。使用md5对传入的背景图做重复鉴别，若相同url的图片被多次设置时，并不会生成新的背景图Layer对象，而是直接使用第一个。由于用作背景图的图片资源通常精细度较高体积较大，这样处理可有效降低页面开销。</p>
+</blockquote>
+<p><strong>功能描述</strong></p>
+<p>更换模型背景图</p>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>url</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>背景图的URL地址</td>
+</tr>
+</tbody></table>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> url = <span class="string">&quot;http://hesheng-zhizao-1306339461.cos.ap-guangzhou.myqcloud.com/test/erp/threeDReal/background/pc/097e5-1c62-45de-beb.jpg&quot;</span></span><br><span class="line">mod.<span class="title function_">updateBackground</span>(url)</span><br></pre></td></tr></table></figure>
+
+<h3 id="plm-updateAttrInMaterial"><a href="#plm-updateAttrInMaterial" class="headerlink" title="plm.updateAttrInMaterial"></a>plm.updateAttrInMaterial</h3><blockquote>
+<p>材料ID可在配置项中的 groups 内获取，也可调用 exportGroups、 getMaterialInGroup 等导出功能相关函数获取材料信息，再直接使用材料对象的id属性</p>
+</blockquote>
+<blockquote>
+<p>支持修改的属性名以及对应属性值，可在附录中查看</p>
+</blockquote>
+<p><strong>功能描述</strong></p>
+<p>更改材料配置参数</p>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>id</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>材料id</td>
+</tr>
+<tr>
+<td>attrKey</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>属性名</td>
+</tr>
+<tr>
+<td>val</td>
+<td>String|Number</td>
+<td></td>
+<td>是</td>
+<td>属性值</td>
+</tr>
+</tbody></table>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> groupId = <span class="string">&#x27;Silk_Chiffon_FRONT_2678&#x27;</span></span><br><span class="line"><span class="keyword">const</span> materialId = plm.<span class="title function_">getMaterialInGroup</span>(<span class="string">&#x27;Silk_Chiffon_FRONT_2678&#x27;</span>).<span class="property">id</span></span><br><span class="line"></span><br><span class="line"><span class="comment">// 更改材料反射光为红色</span></span><br><span class="line">plm.<span class="title function_">updateAttrInMaterial</span>(materialId, <span class="string">&#x27;albedoColor&#x27;</span>, <span class="string">&#x27;#FF0000&#x27;</span>)</span><br><span class="line"><span class="comment">// 修改材料透明度为10%</span></span><br><span class="line">plm.<span class="title function_">updateAttrInMaterial</span>(materialId, <span class="string">&#x27;alpha&#x27;</span>, <span class="number">0.1</span>)</span><br></pre></td></tr></table></figure>
+
+<h3 id="plm-updateAttrInTexture"><a href="#plm-updateAttrInTexture" class="headerlink" title="plm.updateAttrInTexture"></a>plm.updateAttrInTexture</h3><blockquote>
+<p>材料ID获取方式与上文updateAttrInMaterial相同，不再赘述</p>
+</blockquote>
+<blockquote>
+<p>贴图类型合法值有六种 albedoTexture, bumpTexture, emissiveTexture, ambientTexture, opacityTexture, metallicTexture 具体信息见附录</p>
+</blockquote>
+<p><strong>功能描述</strong></p>
+<p>更改纹理贴图配置参数</p>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>id</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>材料id</td>
+</tr>
+<tr>
+<td>textureType</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>贴图类型</td>
+</tr>
+<tr>
+<td>attrKey</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>属性名</td>
+</tr>
+<tr>
+<td>val</td>
+<td>String|Number</td>
+<td></td>
+<td>是</td>
+<td>属性值</td>
+</tr>
+</tbody></table>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> groupId = <span class="string">&#x27;Silk_Chiffon_FRONT_2678&#x27;</span></span><br><span class="line"><span class="keyword">const</span> materialId = plm.<span class="title function_">getMaterialInGroup</span>(<span class="string">&#x27;Silk_Chiffon_FRONT_2678&#x27;</span>).<span class="property">id</span></span><br><span class="line"></span><br><span class="line"><span class="comment">// 更改基本贴图的横向缩放比例为6</span></span><br><span class="line">plm.<span class="title function_">updateAttrInTexture</span>(id, <span class="string">&#x27;albedoTexture&#x27;</span>, <span class="string">&#x27;uScale&#x27;</span>, <span class="number">6</span>)</span><br><span class="line"></span><br><span class="line"><span class="comment">// 更改法线贴图的纵向缩放比例为16</span></span><br><span class="line">plm.<span class="title function_">updateAttrInTexture</span>(id, <span class="string">&#x27;bumpTexture&#x27;</span>, <span class="string">&#x27;vScale&#x27;</span>, <span class="number">16</span>)</span><br></pre></td></tr></table></figure>
+
+<h3 id="plm-enableHighlight"><a href="#plm-enableHighlight" class="headerlink" title="plm.enableHighlight"></a>plm.enableHighlight</h3><p><strong>功能描述</strong></p>
+<p>启用/关闭选区高亮功能，并设置高亮颜色</p>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>enable</td>
+<td>Boolean</td>
+<td></td>
+<td>是</td>
+<td>开启或关闭高亮功能</td>
+</tr>
+<tr>
+<td>color</td>
+<td>String</td>
+<td><code>#00FF00</code></td>
+<td>否</td>
+<td>高亮颜色</td>
+</tr>
+</tbody></table>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 启用高亮，并设置高亮色为红色</span></span><br><span class="line">plm.<span class="title function_">enableHighlight</span>(<span class="literal">true</span>, <span class="string">&#x27;#FF0000&#x27;</span>)</span><br><span class="line"><span class="comment">// 禁用高亮</span></span><br><span class="line">plm.<span class="title function_">enableHighlight</span>(<span class="literal">false</span>)</span><br></pre></td></tr></table></figure>
+
+<h3 id="plm-highlightGroup"><a href="#plm-highlightGroup" class="headerlink" title="plm.highlightGroup"></a>plm.highlightGroup</h3><p><strong>功能描述</strong></p>
+<p>高亮指定区域</p>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>groupId</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>区域id</td>
+</tr>
+</tbody></table>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 高亮第一个分组区域</span></span><br><span class="line"><span class="keyword">const</span> groups = plm.<span class="title function_">exportGroups</span>()</span><br><span class="line"><span class="keyword">if</span> (groups.<span class="property">length</span>) &#123;</span><br><span class="line">    <span class="keyword">const</span> groupId = groups[<span class="number">0</span>].<span class="property">groupId</span></span><br><span class="line">    plm.<span class="title function_">highlightGroup</span>(groupId)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="plm-clearHighlight"><a href="#plm-clearHighlight" class="headerlink" title="plm.clearHighlight"></a>plm.clearHighlight</h3><p><strong>功能描述</strong></p>
+<p>取消模型所有区域高亮状态</p>
+<p><strong>参数</strong></p>
+<p>无</p>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">plm.<span class="title function_">clearHighlight</span>()</span><br></pre></td></tr></table></figure>
+
+<h3 id="plm-updateGroupMaterialV2"><a href="#plm-updateGroupMaterialV2" class="headerlink" title="plm.updateGroupMaterialV2"></a>plm.updateGroupMaterialV2</h3><blockquote>
+<p>updateGroupMaterial 第一版本已经废弃，后续使用 updateGroupMaterialV2</p>
+</blockquote>
+<p><strong>功能描述</strong></p>
+<p>更改区域分组材料</p>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>groupId</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>分组ID</td>
+</tr>
+<tr>
+<td>options</td>
+<td>Object:Options</td>
+<td></td>
+<td>是</td>
+<td>材料生成配置项</td>
+</tr>
+</tbody></table>
+<p><strong>Options</strong></p>
+<table>
+<thead>
+<tr>
+<th>Options属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>uid</td>
+<td>String</td>
+<td>自动生成</td>
+<td>否</td>
+<td>面料id</td>
+</tr>
+<tr>
+<td>alpha</td>
+<td>Number</td>
+<td>1</td>
+<td>否</td>
+<td>不透明度</td>
+</tr>
+<tr>
+<td>metallic</td>
+<td>Number</td>
+<td>0</td>
+<td>否</td>
+<td>金属度</td>
+</tr>
+<tr>
+<td>roughness</td>
+<td>Number</td>
+<td>1</td>
+<td>否</td>
+<td>粗糙度</td>
+</tr>
+<tr>
+<td>emissiveIntensity</td>
+<td>Number</td>
+<td>1</td>
+<td>否</td>
+<td>发光强度</td>
+</tr>
+<tr>
+<td>directIntensity</td>
+<td>Number</td>
+<td>1</td>
+<td>否</td>
+<td>平行光强度</td>
+</tr>
+<tr>
+<td>ambientTextureStrength</td>
+<td>Number</td>
+<td>1</td>
+<td>否</td>
+<td>环境遮罩贴图强度</td>
+</tr>
+<tr>
+<td>albedoColor</td>
+<td>String</td>
+<td><code>#FFFFFF</code></td>
+<td>否</td>
+<td>基础反射光</td>
+</tr>
+<tr>
+<td>clearCoat</td>
+<td>Object:ClearCoat</td>
+<td></td>
+<td>否</td>
+<td>透明涂层设置</td>
+</tr>
+<tr>
+<td>albedoTexture</td>
+<td>Object:Texture</td>
+<td></td>
+<td>是</td>
+<td>基本贴图设置</td>
+</tr>
+<tr>
+<td>bumpTexture</td>
+<td>Object:Texture</td>
+<td></td>
+<td>否</td>
+<td>法线贴图设置</td>
+</tr>
+<tr>
+<td>emissiveTexture</td>
+<td>Object:Texture</td>
+<td></td>
+<td>否</td>
+<td>反射贴图设置</td>
+</tr>
+<tr>
+<td>ambientTexture</td>
+<td>Object:Texture</td>
+<td></td>
+<td>否</td>
+<td>环境反射贴图设置</td>
+</tr>
+<tr>
+<td>opacityTexture</td>
+<td>Object:Texture</td>
+<td></td>
+<td>否</td>
+<td>透明贴图设置</td>
+</tr>
+<tr>
+<td>metallicTexture</td>
+<td>Object:Texture</td>
+<td></td>
+<td>否</td>
+<td>金属纹理贴图设置</td>
+</tr>
+</tbody></table>
+<p><strong>ClearCoat</strong></p>
+<table>
+<thead>
+<tr>
+<th>ClearCoat属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>isEnabled</td>
+<td>Boolean</td>
+<td>false</td>
+<td>否</td>
+<td>是否启用透明涂层</td>
+</tr>
+<tr>
+<td>intensity</td>
+<td>Number</td>
+<td>1</td>
+<td>否</td>
+<td>透明涂层强度</td>
+</tr>
+<tr>
+<td>roughness</td>
+<td>Number</td>
+<td>1</td>
+<td>否</td>
+<td>透明涂层粗糙度</td>
+</tr>
+<tr>
+<td>indiceOfRefraction</td>
+<td>Number</td>
+<td>1.5</td>
+<td>否</td>
+<td>透明涂层折射指数</td>
+</tr>
+</tbody></table>
+<p><strong>Texture</strong></p>
+<table>
+<thead>
+<tr>
+<th>Texture属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>url</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>贴图文件资源地址</td>
+</tr>
+<tr>
+<td>hasAlpha</td>
+<td>Boolean</td>
+<td>false</td>
+<td>否</td>
+<td>是否展示贴图alpha值</td>
+</tr>
+<tr>
+<td>uScale</td>
+<td>Number</td>
+<td>80</td>
+<td>否</td>
+<td>横向缩放倍数</td>
+</tr>
+<tr>
+<td>vScale</td>
+<td>Number</td>
+<td>80</td>
+<td>否</td>
+<td>纵向缩放倍数</td>
+</tr>
+<tr>
+<td>wAng</td>
+<td>Number</td>
+<td>0</td>
+<td>否</td>
+<td>中心旋转角度</td>
+</tr>
+<tr>
+<td>uAng</td>
+<td>Number</td>
+<td>0</td>
+<td>否</td>
+<td>上下旋转角度</td>
+</tr>
+<tr>
+<td>vAng</td>
+<td>Number</td>
+<td>0</td>
+<td>否</td>
+<td>左右旋转角度</td>
+</tr>
+</tbody></table>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br><span class="line">7</span><br><span class="line">8</span><br><span class="line">9</span><br><span class="line">10</span><br><span class="line">11</span><br><span class="line">12</span><br><span class="line">13</span><br><span class="line">14</span><br><span class="line">15</span><br><span class="line">16</span><br><span class="line">17</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> groupId = <span class="string">&#x27;......&#x27;</span></span><br><span class="line"><span class="keyword">const</span> materialConfig = &#123;</span><br><span class="line">    <span class="attr">uid</span>: <span class="string">&#x27;xxxxxxx&#x27;</span>,</span><br><span class="line">    <span class="attr">albedoTexture</span>: &#123;</span><br><span class="line">        <span class="attr">url</span>: <span class="string">&#x27;https://xxxx/xxx/xx.jpg&#x27;</span>,</span><br><span class="line">        <span class="attr">uScale</span>: <span class="number">80</span>,</span><br><span class="line">        <span class="attr">vScale</span>: <span class="number">80</span>,</span><br><span class="line">        <span class="attr">wAng</span>: <span class="number">0</span>,</span><br><span class="line">        <span class="attr">uAng</span>: <span class="number">0</span>,</span><br><span class="line">        <span class="attr">vAng</span>: <span class="number">0</span>,</span><br><span class="line">        <span class="attr">hasAlpha</span>: <span class="literal">false</span></span><br><span class="line">    &#125;,</span><br><span class="line">    <span class="attr">alpha</span>: <span class="number">0.5</span>,</span><br><span class="line">    <span class="attr">albedoColor</span>: <span class="string">&#x27;#FF0000&#x27;</span></span><br><span class="line">&#125;</span><br><span class="line"></span><br><span class="line">plm.<span class="title function_">updateGroupMaterialV2</span>(groupId, materialConfig)</span><br></pre></td></tr></table></figure>
+
+<h3 id="plm-resetGroupMaterial"><a href="#plm-resetGroupMaterial" class="headerlink" title="plm.resetGroupMaterial"></a>plm.resetGroupMaterial</h3><p><strong>功能描述</strong></p>
+<p>还原分组默认面料</p>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>groupId</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>分组ID</td>
+</tr>
+</tbody></table>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> groupId = <span class="string">&#x27;xxxxx&#x27;</span></span><br><span class="line">plm.<span class="title function_">resetGroupMaterial</span>(groupId)</span><br></pre></td></tr></table></figure>
+
+<h3 id="plm-selectGroup"><a href="#plm-selectGroup" class="headerlink" title="plm.selectGroup"></a>plm.selectGroup</h3><blockquote>
+<p>选中分组区域后会伴有高亮效果，同时触发render函数的 cbSelect 回调。</p>
+</blockquote>
+<blockquote>
+<p>选中分组区域有两种方式，即交互式触发和编程式触发。交互式即用户鼠标点击模型的指定区域触发；编程式不需要鼠标点击，因此可利用本方法实现具体的定制业务逻辑。</p>
+</blockquote>
+<p><strong>功能描述</strong></p>
+<p>编程式选中分组区域</p>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>groupId</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>分组ID</td>
+</tr>
+</tbody></table>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> groupId = <span class="string">&#x27;xxxxx&#x27;</span></span><br><span class="line">plm.<span class="title function_">selectGroup</span>(groupId)</span><br></pre></td></tr></table></figure>
+
+
+<h3 id="plm-getMaterialInGroup"><a href="#plm-getMaterialInGroup" class="headerlink" title="plm.getMaterialInGroup"></a>plm.getMaterialInGroup</h3><p><strong>功能描述</strong></p>
+<p>打印指定区域分组的材料对象</p>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>groupId</td>
+<td>String</td>
+<td></td>
+<td>是</td>
+<td>区域分组ID</td>
+</tr>
+</tbody></table>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br><span class="line">5</span><br><span class="line">6</span><br></pre></td><td class="code"><pre><span class="line"><span class="keyword">const</span> groups = plm.<span class="title function_">exportGroups</span>()</span><br><span class="line"><span class="keyword">if</span> (groups.<span class="property">length</span>) &#123;</span><br><span class="line">    <span class="keyword">const</span> groupId = groups[<span class="number">0</span>].<span class="property">groupId</span></span><br><span class="line">    <span class="keyword">const</span> metarial = plm.<span class="title function_">getMaterialInGroup</span>(groupId)</span><br><span class="line">    <span class="variable language_">console</span>.<span class="title function_">log</span>(metarial)</span><br><span class="line">&#125;</span><br></pre></td></tr></table></figure>
+
+<h3 id="plm-exportGroups"><a href="#plm-exportGroups" class="headerlink" title="plm.exportGroups"></a>plm.exportGroups</h3><blockquote>
+<p>返回的分组信息列表为深拷贝，其格式见附录</p>
+</blockquote>
+<p><strong>功能描述</strong></p>
+<p>打印分组信息</p>
+<p><strong>参数</strong></p>
+<p>无</p>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br></pre></td><td class="code"><pre><span class="line">plm.<span class="title function_">exportGroups</span>()</span><br></pre></td></tr></table></figure>
+
+<h3 id="plm-resetCamera"><a href="#plm-resetCamera" class="headerlink" title="plm.resetCamera"></a>plm.resetCamera</h3><p><strong>功能描述</strong></p>
+<p>重置视角</p>
+<p><strong>参数</strong></p>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>默认值</th>
+<th>必填</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>radius</td>
+<td>Number</td>
+<td>模型初始距离</td>
+<td>否</td>
+<td>相机与模型距离</td>
+</tr>
+</tbody></table>
+<p><strong>示例代码</strong></p>
+<figure class="highlight javascript"><table><tr><td class="gutter"><pre><span class="line">1</span><br><span class="line">2</span><br><span class="line">3</span><br><span class="line">4</span><br></pre></td><td class="code"><pre><span class="line"><span class="comment">// 重置视角 距离为模型最适距离</span></span><br><span class="line">plm.<span class="title function_">resetCamera</span>()</span><br><span class="line"><span class="comment">// 重置视角 距离为自定义距离</span></span><br><span class="line">plm.<span class="title function_">resetCamera</span>(<span class="number">1.2</span>)</span><br></pre></td></tr></table></figure>
+
+<h1 id="五-附录"><a href="#五-附录" class="headerlink" title="五. 附录"></a>五. 附录</h1><h2 id="1-材料配置参数"><a href="#1-材料配置参数" class="headerlink" title="1. 材料配置参数"></a>1. 材料配置参数</h2><table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>取值范围</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>albedoColor</td>
+<td>String</td>
+<td>#FFFFFF</td>
+<td><code>#000000 ~ #FFFFFF</code></td>
+<td>基本反射颜色，任意hex颜色码均可</td>
+</tr>
+<tr>
+<td>alpha</td>
+<td>Number</td>
+<td>1</td>
+<td><code>[0, 1]</code></td>
+<td>alpha值，取0时全透，取1时不透明</td>
+</tr>
+</tbody></table>
+<h2 id="2-材料贴图类型"><a href="#2-材料贴图类型" class="headerlink" title="2. 材料贴图类型"></a>2. 材料贴图类型</h2><table>
+<thead>
+<tr>
+<th>编码</th>
+<th>名称</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>albedoTexture</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>bumpTexture</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>emissiveTexture</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>ambientTexture</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>opacityTexture</td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td>metallicTexture</td>
+<td></td>
+<td></td>
+</tr>
+</tbody></table>
+<h2 id="3-纹理贴图配置参数"><a href="#3-纹理贴图配置参数" class="headerlink" title="3. 纹理贴图配置参数"></a>3. 纹理贴图配置参数</h2><table>
+<thead>
+<tr>
+<th>参数</th>
+<th>类型</th>
+<th>默认值</th>
+<th>取值范围</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>url</td>
+<td>String</td>
+<td></td>
+<td></td>
+<td>贴图地址</td>
+</tr>
+<tr>
+<td>uScale</td>
+<td>Number</td>
+<td>80</td>
+<td><code>[1, 100]</code></td>
+<td>横向缩放倍数</td>
+</tr>
+<tr>
+<td>vScale</td>
+<td>Number</td>
+<td>80</td>
+<td><code>[1, 100]</code></td>
+<td>纵向缩放倍数</td>
+</tr>
+<tr>
+<td>wAng</td>
+<td>Number</td>
+<td>0</td>
+<td><code>[0, 360]</code></td>
+<td>中心旋转角度</td>
+</tr>
+<tr>
+<td>uAng</td>
+<td>Number</td>
+<td>0</td>
+<td><code>[0, 360]</code></td>
+<td>上下旋转角度</td>
+</tr>
+<tr>
+<td>vAng</td>
+<td>Number</td>
+<td>0</td>
+<td><code>[0, 360]</code></td>
+<td>左右旋转角度</td>
+</tr>
+<tr>
+<td>hasAlpha</td>
+<td>BOOlean</td>
+<td>false</td>
+<td>true/false</td>
+<td>开启贴图alpha模式，在url图片为png时有效</td>
+</tr>
+</tbody></table>
+<h2 id="4-分组信息打印格式-Array-lt-GroupInfo-gt"><a href="#4-分组信息打印格式-Array-lt-GroupInfo-gt" class="headerlink" title="4. 分组信息打印格式 Array&lt;GroupInfo&gt;"></a>4. 分组信息打印格式 Array&lt;GroupInfo&gt;</h2><ul>
+<li>GroupInfo 可通过配置项config内的groups参数配置</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>取值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>groupId</td>
+<td>String</td>
+<td></td>
+<td>分组ID</td>
+</tr>
+<tr>
+<td>name</td>
+<td>String</td>
+<td></td>
+<td>组别名称，未取值时和groupId一致</td>
+</tr>
+<tr>
+<td>isShow</td>
+<td>String</td>
+<td>0-不展示 1-展示</td>
+<td>是否展示</td>
+</tr>
+<tr>
+<td>meshes</td>
+<td>Array&lt;MeshInfo&gt;</td>
+<td></td>
+<td>三维面列表</td>
+</tr>
+</tbody></table>
+<ul>
+<li>MeshInfo 在建模过程中由建模师设置</li>
+</ul>
+<table>
+<thead>
+<tr>
+<th>属性</th>
+<th>类型</th>
+<th>取值</th>
+<th>说明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>id</td>
+<td>String</td>
+<td></td>
+<td>分组ID</td>
+</tr>
+<tr>
+<td>isVisible</td>
+<td>BOOlean</td>
+<td>true/false</td>
+<td>面是否展示</td>
+</tr>
+<tr>
+<td>name</td>
+<td>String</td>
+<td></td>
+<td>面名称</td>
+</tr>
+<tr>
+<td>uniqueId</td>
+<td>Number</td>
+<td></td>
+<td>uid</td>
+</tr>
+</tbody></table>
+
+            
+
+
+        </div>
+    </div>
+    <div id="post-footer" class="post-footer main-content-wrap">
+        
+        
+            <div class="post-actions-wrap">
+    <nav>
+        <ul class="post-actions post-action-nav">
+            <li class="post-action">
+                
+                    
+                <a
+                    class="post-action-btn btn btn--default tooltip--top"
+                    href="/2022/07/21/test-post/"
+                    data-tooltip="test_post"
+                    aria-label="PREVIOUS: test_post"
+                >
+                    
+                        <i class="fa fa-angle-left" aria-hidden="true"></i>
+                        <span class="hide-xs hide-sm text-small icon-ml">PREVIOUS</span>
+                    </a>
+            </li>
+            <li class="post-action">
+                
+                    
+                <a
+                    class="post-action-btn btn btn--default tooltip--top"
+                    href="/2022/07/21/hello-world/"
+                    data-tooltip="Hello World"
+                    aria-label="NEXT: Hello World"
+                >
+                    
+                        <span class="hide-xs hide-sm text-small icon-mr">NEXT</span>
+                        <i class="fa fa-angle-right" aria-hidden="true"></i>
+                    </a>
+            </li>
+        </ul>
+    </nav>
+    <ul class="post-actions post-action-share">
+        <li class="post-action hide-lg hide-md hide-sm">
+            <a
+                class="post-action-btn btn btn--default btn-open-shareoptions"
+                href="#btn-open-shareoptions"
+                aria-label="Share this post"
+            >
+                <i class="fa fa-share-alt" aria-hidden="true"></i>
+            </a>
+        </li>
+        
+            
+            
+            <li class="post-action hide-xs">
+                <a
+                    class="post-action-btn btn btn--default"
+                    target="new" href="https://www.facebook.com/sharer/sharer.php?u=https://moran96.github.io/2022/07/21/3d/"
+                    title="Share on Facebook"
+                    aria-label="Share on Facebook"
+                >
+                    <i class="fab fa-facebook" aria-hidden="true"></i>
+                </a>
+            </li>
+        
+            
+            
+            <li class="post-action hide-xs">
+                <a
+                    class="post-action-btn btn btn--default"
+                    target="new" href="https://twitter.com/intent/tweet?text=https://moran96.github.io/2022/07/21/3d/"
+                    title="Share on Twitter"
+                    aria-label="Share on Twitter"
+                >
+                    <i class="fab fa-twitter" aria-hidden="true"></i>
+                </a>
+            </li>
+        
+            
+            
+            <li class="post-action hide-xs">
+                <a
+                    class="post-action-btn btn btn--default"
+                    target="new" href="https://plus.google.com/share?url=https://moran96.github.io/2022/07/21/3d/"
+                    title="Share on Google+"
+                    aria-label="Share on Google+"
+                >
+                    <i class="fab fa-google-plus" aria-hidden="true"></i>
+                </a>
+            </li>
+        
+        
+            
+        
+        <li class="post-action">
+            
+                <a class="post-action-btn btn btn--default" href="#" aria-label="Back to top">
+            
+                <i class="fa fa-list" aria-hidden="true"></i>
+            </a>
+        </li>
+    </ul>
+</div>
+
+
+        
+        
+            
+        
+    </div>
+</article>
+
+
+
+                <footer id="footer" class="main-content-wrap">
+    <span class="copyrights">
+        Copyrights &copy; 2022 Moran. All Rights Reserved.
+    </span>
+</footer>
+
+            </div>
+            
+                <div id="bottom-bar" class="post-bottom-bar" data-behavior="4">
+                    <div class="post-actions-wrap">
+    <nav>
+        <ul class="post-actions post-action-nav">
+            <li class="post-action">
+                
+                    
+                <a
+                    class="post-action-btn btn btn--default tooltip--top"
+                    href="/2022/07/21/test-post/"
+                    data-tooltip="test_post"
+                    aria-label="PREVIOUS: test_post"
+                >
+                    
+                        <i class="fa fa-angle-left" aria-hidden="true"></i>
+                        <span class="hide-xs hide-sm text-small icon-ml">PREVIOUS</span>
+                    </a>
+            </li>
+            <li class="post-action">
+                
+                    
+                <a
+                    class="post-action-btn btn btn--default tooltip--top"
+                    href="/2022/07/21/hello-world/"
+                    data-tooltip="Hello World"
+                    aria-label="NEXT: Hello World"
+                >
+                    
+                        <span class="hide-xs hide-sm text-small icon-mr">NEXT</span>
+                        <i class="fa fa-angle-right" aria-hidden="true"></i>
+                    </a>
+            </li>
+        </ul>
+    </nav>
+    <ul class="post-actions post-action-share">
+        <li class="post-action hide-lg hide-md hide-sm">
+            <a
+                class="post-action-btn btn btn--default btn-open-shareoptions"
+                href="#btn-open-shareoptions"
+                aria-label="Share this post"
+            >
+                <i class="fa fa-share-alt" aria-hidden="true"></i>
+            </a>
+        </li>
+        
+            
+            
+            <li class="post-action hide-xs">
+                <a
+                    class="post-action-btn btn btn--default"
+                    target="new" href="https://www.facebook.com/sharer/sharer.php?u=https://moran96.github.io/2022/07/21/3d/"
+                    title="Share on Facebook"
+                    aria-label="Share on Facebook"
+                >
+                    <i class="fab fa-facebook" aria-hidden="true"></i>
+                </a>
+            </li>
+        
+            
+            
+            <li class="post-action hide-xs">
+                <a
+                    class="post-action-btn btn btn--default"
+                    target="new" href="https://twitter.com/intent/tweet?text=https://moran96.github.io/2022/07/21/3d/"
+                    title="Share on Twitter"
+                    aria-label="Share on Twitter"
+                >
+                    <i class="fab fa-twitter" aria-hidden="true"></i>
+                </a>
+            </li>
+        
+            
+            
+            <li class="post-action hide-xs">
+                <a
+                    class="post-action-btn btn btn--default"
+                    target="new" href="https://plus.google.com/share?url=https://moran96.github.io/2022/07/21/3d/"
+                    title="Share on Google+"
+                    aria-label="Share on Google+"
+                >
+                    <i class="fab fa-google-plus" aria-hidden="true"></i>
+                </a>
+            </li>
+        
+        
+            
+        
+        <li class="post-action">
+            
+                <a class="post-action-btn btn btn--default" href="#" aria-label="Back to top">
+            
+                <i class="fa fa-list" aria-hidden="true"></i>
+            </a>
+        </li>
+    </ul>
+</div>
+
+
+                </div>
+                
+    <div id="share-options-bar" class="share-options-bar" data-behavior="4">
+        <i id="btn-close-shareoptions" class="fa fa-times"></i>
+        <ul class="share-options">
+            
+                
+                
+                <li class="share-option">
+                    <a
+                        class="share-option-btn"
+                        target="new"
+                        href="https://www.facebook.com/sharer/sharer.php?u=https://moran96.github.io/2022/07/21/3d/"
+                        aria-label="Share on Facebook"
+                    >
+                        <i class="fab fa-facebook" aria-hidden="true"></i><span>Share on Facebook</span>
+                    </a>
+                </li>
+            
+                
+                
+                <li class="share-option">
+                    <a
+                        class="share-option-btn"
+                        target="new"
+                        href="https://twitter.com/intent/tweet?text=https://moran96.github.io/2022/07/21/3d/"
+                        aria-label="Share on Twitter"
+                    >
+                        <i class="fab fa-twitter" aria-hidden="true"></i><span>Share on Twitter</span>
+                    </a>
+                </li>
+            
+                
+                
+                <li class="share-option">
+                    <a
+                        class="share-option-btn"
+                        target="new"
+                        href="https://plus.google.com/share?url=https://moran96.github.io/2022/07/21/3d/"
+                        aria-label="Share on Google+"
+                    >
+                        <i class="fab fa-google-plus" aria-hidden="true"></i><span>Share on Google+</span>
+                    </a>
+                </li>
+            
+        </ul>
+    </div>
+
+
+            
+        </div>
+        
+
+
+    
+        
+    
+
+<div id="about">
+    <div id="about-card">
+        <div id="about-btn-close">
+            <i class="fa fa-times"></i>
+        </div>
+        
+            <img id="about-card-picture" src="/assets/images/zhen.jpg" alt="Author&#39;s picture"/>
+        
+            <h4 id="about-card-name">Moran</h4>
+        
+            <div id="about-card-bio"><p>author.bio</p>
+</div>
+        
+        
+            <div id="about-card-job">
+                <i class="fa fa-briefcase"></i>
+                <br/>
+                <p>author.job</p>
+
+            </div>
+        
+        
+            <div id="about-card-location">
+                <i class="fa fa-map-marker-alt"></i>
+                <br/>
+                GuangZhou
+            </div>
+        
+    </div>
+</div>
+
+        
+        
+<div id="cover" style="background-image:url('/assets/images/cover.jpg');"></div>
+        <!--SCRIPTS-->
+
+<script src="/assets/js/script-jbvqsksczqzxuy9utybzyxqod4hdpslxo1c2wvfa4jzbmyuyh4crgaqfmxyv.min.js"></script>
+
+<!--SCRIPTS END-->
+
+
+    
+
+
+
+
+    </body>
+</html>
